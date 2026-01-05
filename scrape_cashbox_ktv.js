@@ -32,11 +32,24 @@ function isoDateStampTaipei() {
   // 如果站點較慢，可把 timeout 拉長
   page.setDefaultTimeout(60000);
 
-  await page.goto(TARGET_URL, { waitUntil: "domcontentloaded" });
+  await page.goto(TARGET_URL, { waitUntil: "networkidle" });
 
-  // 等待兩個榜單容器出現（動態載入）
-  await page.waitForSelector("ul.billSongC li", { timeout: 60000 });
-  await page.waitForSelector("ul.billSongT li", { timeout: 60000 });
+// 1) 可能有「系統通知/提醒」遮住或影響顯示：能關就先關（關不到也沒關係）
+try {
+  const closeBtn = page.locator('text=關閉視窗').first();
+  if (await closeBtn.count()) await closeBtn.click({ timeout: 3000 });
+} catch {}
+
+// 2) 明確點到「點播總排行」tab（避免榜單區塊仍在 hidden 的狀態）
+try {
+  const tab = page.locator('a:has-text("點播總排行")').first();
+  if (await tab.count()) await tab.click({ timeout: 10000 });
+} catch {}
+
+// 3) 等待「非表頭」的資料列出現（不是 li.charts-list-row--header）
+await page.waitForSelector('ul.billSongC li:not(.charts-list-row--header)', { timeout: 120000 });
+await page.waitForSelector('ul.billSongT li:not(.charts-list-row--header)', { timeout: 120000 });
+
 
   const data = await page.evaluate(() => {
     const clean = (s) => (s ?? "").toString().replace(/\u00a0/g, " ").trim();
