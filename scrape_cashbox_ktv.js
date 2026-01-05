@@ -32,23 +32,131 @@ function isoDateStampTaipei() {
   // 如果站點較慢，可把 timeout 拉長
   page.setDefaultTimeout(60000);
 
-  await page.goto(TARGET_URL, { waitUntil: "networkidle" });
+  import fs from "fs";
+import path from "path";
+import { chromium } from "playwright";
 
-// 1) 可能有「系統通知/提醒」遮住或影響顯示：能關就先關（關不到也沒關係）
-try {
-  const closeBtn = page.locator('text=關閉視窗').first();
-  if (await closeBtn.count()) await closeBtn.click({ timeout: 3000 });
-} catch {}
+const TARGET_URL = "https://www.cashboxparty.com/Music/KTVMusic.aspx";
 
-// 2) 明確點到「點播總排行」tab（避免榜單區塊仍在 hidden 的狀態）
-try {
-  const tab = page.locator('a:has-text("點播總排行")').first();
-  if (await tab.count()) await tab.click({ timeout: 10000 });
-} catch {}
+function ensureDir(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
 
-// 3) 等待「非表頭」的資料列出現（不是 li.charts-list-row--header）
-await page.waitForSelector('ul.billSongC li:not(.charts-list-row--header)', { timeout: 120000 });
-await page.waitForSelector('ul.billSongT li:not(.charts-list-row--header)', { timeout: 120000 });
+async function closeOverlays(page) {
+  // 可能有兩種：系統通知、系統提醒（都有 × / 關閉視窗） :contentReference[oaicite:1]{index=1}
+  const candidates = [
+    'text=關閉視窗',
+    'button:has-text("關閉視窗")',
+    'text=×',
+    'button:has-text("×")',
+    '.modal .close',
+    '.modal button.close',
+    '.modal .btn-close',
+  ];
+
+  for (let i = 0; i < 3; i++) {
+    for (const sel of candidates) {
+      try {
+        const loc = page.locator(sel).first();
+        if (await loc.count()) {
+          await loc.click({ timeout: 1500 }).catch(() => {});
+        }
+      } catch {}
+    }
+    // Esc 也試一次
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(800);
+  }
+}
+
+async function clickTopTab(page, name) {
+  // 避免點到上方導覽列同名連結：用 role + first，多試幾次
+  for (let i = 0; i < 2; i++) {
+    try {
+      const tab = page.getByRole("link", { name }).first();
+      await tab.click({ timeout: 8000 });
+      await page.waitForTimeout(1200);
+      return;
+    } catch {}
+  }
+}
+
+async function writeDebug(page, debugDir, networkLog) {
+  ensureDir(debugDir);
+  fs.writeFileSync(path.join(debugDir, "network.log"), networkLog.join("\n"), "utf-8");
+  const html = await page.content();
+  fs.writeFileSync(path.join(debugDir, "page.html"), html, "utf-8");
+  await page.screenshot({ path: path.join(debugDir, "page.png"), fullPage: true }).catch(() => {});
+}
+
+(async () => {
+  const debugDir = "debug";
+  ensureDir(debugDir);
+
+  const networkLog = [];
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  });
+
+  const context = await browser.newContext({
+    locale: "zh-TW",
+    timezoneId: "Asia/Taipei",
+    viewport: { width: 1440, height: 900 },
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+  });
+
+  // 反 webdriver 偵測（最常見的一條）
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+    Object.defineProperty(navigator, "languages", { get: () => ["zh-TW", "zh", "en-US", "en"] });
+    Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
+  });
+
+  const page = await context.newPage();
+
+  page.on("console", (msg) => networkLog.push(`[console.${msg.type()}] ${msg.text()}`));
+  page.on("pageerror", (err) => networkLog.push(`[pageerror] ${err.message}`));
+  page.on("requestfailed", (req) =>
+    networkLog.push(`[requestfailed] ${req.url()} :: ${req.failure()?.errorText}`)
+  );
+  page.on("response", async (res) => {
+    const s = res.status();
+    if (s >= 400) networkLog.push(`[http ${s}] ${res.url()}`);
+  });
+
+  try {
+    await page.goto(TARGET_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(1500);
+
+    await closeOverlays(page);
+
+    // 明確切到「點播總排行」
+    await clickTopTab(page, "點播總排行");
+    await closeOverlays(page);
+
+    // 等待資料列出現：只要「存在」即可，不要求 visible
+    await page.waitForFunction(() => {
+      const c = document.querySelectorAll("ul.billSongC li").length;
+      const t = document.querySelectorAll("ul.billSongT li").length;
+      return c > 1 && t > 1;
+    }, { timeout: 180000 });
+
+    // 你的後續解析流程維持不變（從 ul.billSongC / ul.billSongT 抽資料）
+    // ...
+  } catch (err) {
+    await writeDebug(page, debugDir, networkLog);
+    throw err;
+  } finally {
+    await browser.close();
+  }
+})();
+
 
 
   const data = await page.evaluate(() => {
