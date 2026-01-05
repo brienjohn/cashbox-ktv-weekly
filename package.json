@@ -1,0 +1,11 @@
+{
+  "name": "cashbox-ktv-scraper",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape": "node scrape_cashbox_ktv.js"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}
