@@ -30,6 +30,11 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
 
+      - name: Prepare debug dir
+        run: |
+          mkdir -p debug
+          echo "" > debug/.keep
+
       - name: Run scraper
         run: |
           npm run scrape
