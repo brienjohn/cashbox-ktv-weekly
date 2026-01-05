@@ -41,3 +41,10 @@ jobs:
           git add data/*.csv
           git commit -m "Add weekly Cashbox KTV CSV" || echo "No changes to commit"
           git push
+
+      - name: Upload debug artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug
+          path: debug/
